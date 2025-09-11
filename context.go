@@ -452,6 +452,15 @@ func (c *Context) Err() error {
 	return c.Request.Context().Err()
 }
 
+// Value implements context.Context and returns the value associated with this context for key,required Go 1.18+.
+// Proxies http.Request.Context().Value(key).
+func (c *Context) Value(key any) any {
+	if c.Request == nil {
+		return nil
+	}
+	return c.Request.Context().Value(key)
+}
+
 // RealIP returns the client IP considering common reverse proxy headers.
 // Order: X-Forwarded-For (first), X-Real-IP, then RemoteAddr fallback.
 func (c *Context) RealIP() string {
