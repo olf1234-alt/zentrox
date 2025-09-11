@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/aminofox/zentrox"
@@ -42,9 +43,18 @@ func main() {
 	}))
 
 	api := app.Scope("api", AuthGuard())
-	api.OnGet("/users", func(ctx *zentrox.Context) {
-		ctx.SendText(200, "list ok")
-	})
+	{
+		api.OnGet("/users", func(ctx *zentrox.Context) {
+			ctx.SendText(200, "list ok")
+		})
+		api.OnGet("/user/:id", AfterAuthGuard(), func(ctx *zentrox.Context) {
+			id := ctx.Param("id")
+			ctx.SendText(200, fmt.Sprintf("User is %s", id))
+		})
+		api.OnGet("/me", func(ctx *zentrox.Context) {
+			ctx.SendText(200, "me ok")
+		})
+	}
 
 	log.Println("listening on :8000")
 	_ = app.Run(":8000")

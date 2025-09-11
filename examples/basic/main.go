@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -8,6 +10,10 @@ import (
 	"github.com/aminofox/zentrox"
 	"github.com/aminofox/zentrox/middleware"
 )
+
+func handleLogic(ctx context.Context, param, requestID string) string {
+	return fmt.Sprintf(`[handleLogic] with param %s and requestID %s`, param, requestID)
+}
 
 func main() {
 	app := zentrox.NewApp()
@@ -34,6 +40,11 @@ func main() {
 
 	app.OnGet("/", func(c *zentrox.Context) {
 		c.SendText(http.StatusOK, `zentrox up!`+c.RequestID())
+	})
+
+	app.OnGet(":id", func(c *zentrox.Context) {
+		txt := handleLogic(c, c.Param("id"), c.RequestID())
+		c.SendText(http.StatusOK, txt)
 	})
 
 	// Example: standardized error payload
