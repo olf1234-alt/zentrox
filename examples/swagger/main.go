@@ -25,6 +25,24 @@ type AppError struct {
 	Type   string `json:"type"`
 }
 
+func AuthGuard() zentrox.Handler {
+	return func(c *zentrox.Context) {
+		if c.Request.Header.Get("X-Token") != "secret" {
+			c.Problemf(401, "unauthorized", "missing or invalid token")
+			c.Abort()
+			return
+		}
+		c.Forward()
+	}
+}
+
+func AfterAuthGuard() zentrox.Handler {
+	return func(c *zentrox.Context) {
+		log.Println("AfterAuthGuard")
+		c.Forward()
+	}
+}
+
 func main() {
 	app := zentrox.NewApp()
 	b := openapi.New(
@@ -33,7 +51,11 @@ func main() {
 		openapi.WithServer("http://localhost:8000", "local"),
 		openapi.WithDescription("Example demonstrating OpenAPI with helper wrappers"),
 	)
-	app.SetEnableOpenAPI(true).MountOpenAPI(b, "/openapi.json", "/docs")
+
+	app.SetPrintRoutes(true).
+		SetEnableOpenAPI(true).
+		MountOpenAPI(b, "/openapi.json", "/docs").
+		SetPrintRoutes(true)
 
 	app.OnGetDoc(b, "/users/:id", func(c *zentrox.Context) {
 		u := User{ID: c.Param("id"), Name: "Alice", Email: "alice@example.com"}
@@ -70,6 +92,52 @@ func main() {
 		SetSummary("Health check").
 		SetTag("system").
 		ResponseJSON(200, map[string]string{"status": "ok"}, "OK"),
+	)
+
+	v1 := app.Scope("/api/v1")
+	v1.OnGetDoc(b, "/users/:id", func(c *zentrox.Context) {
+		u := User{ID: c.Param("id"), Name: "Bob", Email: "bob@example.com"}
+		c.SendJSON(200, u)
+	}, openapi.Op().
+		SetSummary("Get v1 user by ID").
+		SetTag("users").
+		ResponseJSON(200, User{}, "OK").
+		ResponseProblem(404, "User not found", AppError{}),
+	)
+	v1.OnPostDoc(b, "/users", func(c *zentrox.Context) {
+		var in CreateUser
+		if err := c.BindJSONInto(&in); err != nil {
+			c.Problemf(400, "invalid payload", err.Error())
+			return
+		}
+		u := User{ID: "v1-999", Name: in.Name, Email: in.Email}
+		c.SendJSON(201, u)
+	}, openapi.Op().
+		SetSummary("Create v1 user").
+		SetTag("users").
+		RequestJSON(CreateUser{}, true, "payload").
+		ResponseJSON(201, &User{}, "Created"),
+	)
+
+	v1.OnGetDoc(b, "/healthz", func(c *zentrox.Context) {
+		c.SendJSON(200, map[string]any{"status": "ok", "scope": "v1"})
+	}, openapi.Op().
+		SetSummary("Health check v1").
+		SetTag("system").
+		ResponseJSON(200, map[string]any{"status": "ok", "scope": "v1"}, "OK"),
+	)
+
+	admin := app.Scope("/admin", AuthGuard(), AfterAuthGuard())
+	admin.OnGetDoc(b, "/stats", func(c *zentrox.Context) {
+		c.SendJSON(200, map[string]any{
+			"users":  42,
+			"orders": 7,
+			"scope":  "admin",
+		})
+	}, openapi.Op().
+		SetSummary("Admin stats").
+		SetTag("admin").
+		ResponseJSON(200, map[string]any{"users": 0, "orders": 0, "scope": "admin"}, "OK"),
 	)
 
 	log.Println("listening on :8000")

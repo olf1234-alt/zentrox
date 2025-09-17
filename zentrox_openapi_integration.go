@@ -2,16 +2,22 @@ package zentrox
 
 import (
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/aminofox/zentrox/openapi"
 )
 
 // MountOpenAPI mounts /openapi.json and /docs. Call this only when you want Swagger enabled.
-func (app *App) MountOpenAPI(b *openapi.Builder, jsonPath, uiPath string) {
+func (app *App) MountOpenAPI(b *openapi.Builder, jsonPath, uiPath string) *App {
 	if !app.enableOpenapi {
-		return
+		return app
 	}
+
+	if b != nil {
+		b.UseHTTPBearerAuth("bearerAuth")
+	}
+
 	if jsonPath == "" {
 		jsonPath = "/openapi.json"
 	}
@@ -22,10 +28,15 @@ func (app *App) MountOpenAPI(b *openapi.Builder, jsonPath, uiPath string) {
 		h := openapi.ServeJSON(b)
 		h(c.Writer, c.Request)
 	})
+
+	// UI auto-resolves spec URL relative to uiPath (works at root or in a scope)
+	specBasename := path.Base(jsonPath)
 	app.OnGet(uiPath, func(c *Context) {
-		h := openapi.ServeUI(jsonPath, b.Info.Title)
+		h := openapi.ServeUIAuto(specBasename, b.Info.Title)
 		h(c.Writer, c.Request)
 	})
+
+	return app
 }
 
 // Optional helpers to "auto" register spec alongside route registration
@@ -78,11 +89,18 @@ func (app *App) registerDoc(b *openapi.Builder, method, routePath string, h Hand
 
 	// Normalize route to OpenAPI path + collect params
 	specPath, params := colonPathToOpenAPI(routePath)
-
+	handlerName := ""
 	if op == nil {
 		op = openapi.Op()
+	} else {
+		if op.OperationID != "" {
+			handlerName = op.OperationID
+		} else if op.Summary != "" {
+			handlerName = op.Summary
+		}
 	}
 
+	app.updateRouteName(method, routePath, handlerName)
 	// Make sure each param is in op.Parameters (avoid duplicates)
 	existing := map[string]bool{}
 	for _, p := range op.Parameters {
@@ -97,6 +115,73 @@ func (app *App) registerDoc(b *openapi.Builder, method, routePath string, h Hand
 	}
 
 	openapi.Register(b, method, specPath, op)
+}
+
+func (s *Scope) OnGetDoc(b *openapi.Builder, routePath string, h Handler, op *openapi.Operation) {
+	s.registerDoc(b, http.MethodGet, routePath, h, op)
+}
+func (s *Scope) OnPostDoc(b *openapi.Builder, routePath string, h Handler, op *openapi.Operation) {
+	s.registerDoc(b, http.MethodPost, routePath, h, op)
+}
+func (s *Scope) OnPutDoc(b *openapi.Builder, routePath string, h Handler, op *openapi.Operation) {
+	s.registerDoc(b, http.MethodPut, routePath, h, op)
+}
+func (s *Scope) OnPatchDoc(b *openapi.Builder, routePath string, h Handler, op *openapi.Operation) {
+	s.registerDoc(b, http.MethodPatch, routePath, h, op)
+}
+func (s *Scope) OnDeleteDoc(b *openapi.Builder, routePath string, h Handler, op *openapi.Operation) {
+	s.registerDoc(b, http.MethodDelete, routePath, h, op)
+}
+
+func (s *Scope) registerDoc(b *openapi.Builder, method, routePath string, h Handler, op *openapi.Operation) {
+	switch strings.ToUpper(method) {
+	case http.MethodGet:
+		s.OnGet(routePath, h)
+	case http.MethodPost:
+		s.OnPost(routePath, h)
+	case http.MethodPut:
+		s.OnPut(routePath, h)
+	case http.MethodPatch:
+		s.OnPatch(routePath, h)
+	case http.MethodDelete:
+		s.OnDelete(routePath, h)
+	default:
+		s.OnGet(routePath, h)
+	}
+
+	if !s.app.EnableOpenAPI() {
+		return
+	}
+
+	// "/users/:id" -> "/users/{id}" + params
+	specPath, params := colonPathToOpenAPI(routePath)
+
+	if op == nil {
+		op = openapi.Op()
+	}
+
+	existing := map[string]bool{}
+	for _, p := range op.Parameters {
+		if p.In == "path" {
+			existing[p.Name] = true
+		}
+	}
+	for _, name := range params {
+		if !existing[name] {
+			op.PathParam(name, "string", true, name)
+		}
+	}
+
+	openapi.Register(b, method, s.prefix+specPath, op)
+	handlerName := ""
+	if op != nil {
+		if op.OperationID != "" {
+			handlerName = op.OperationID
+		} else if op.Summary != "" {
+			handlerName = strings.ReplaceAll(op.Summary, " ", "")
+		}
+	}
+	s.app.updateRouteName(method, s.prefix+routePath, handlerName)
 }
 
 // colonPathToOpenAPI converts "/users/:id/files/*path" -> "/users/{id}/files/{path}" and returns ["id","path"].

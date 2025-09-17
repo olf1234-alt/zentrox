@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -12,11 +13,12 @@ import (
 // - Register operations per route (safe & additive)
 type Builder struct {
 	openapi    string
-	Info       Info                `json:"info"`
-	Servers    []Server            `json:"servers,omitempty"`
-	Paths      map[string]PathItem `json:"paths"`
-	Tags       []Tag               `json:"tags,omitempty"`
-	Components Components          `json:"components,omitempty"`
+	Info       Info                  `json:"info"`
+	Servers    []Server              `json:"servers,omitempty"`
+	Paths      map[string]PathItem   `json:"paths"`
+	Tags       []Tag                 `json:"tags,omitempty"`
+	Components Components            `json:"components,omitempty"`
+	Security   []SecurityRequirement `json:"security,omitempty"`
 }
 
 type Info struct {
@@ -50,7 +52,8 @@ type Tag struct {
 }
 
 type Components struct {
-	Schemas map[string]*Schema `json:"schemas,omitempty"`
+	Schemas         map[string]*Schema           `json:"schemas,omitempty"`
+	SecuritySchemes map[string]SecuritySchemeRef `json:"securitySchemes,omitempty"`
 }
 
 // New creates a new OpenAPI builder with sane defaults.
@@ -60,7 +63,8 @@ func New(title, version string, opts ...Option) *Builder {
 		Info:    Info{Title: title, Version: version},
 		Paths:   map[string]PathItem{},
 		Components: Components{
-			Schemas: map[string]*Schema{},
+			Schemas:         map[string]*Schema{},
+			SecuritySchemes: map[string]SecuritySchemeRef{},
 		},
 	}
 	for _, opt := range opts {
@@ -143,6 +147,33 @@ type Header struct {
 	Description string     `json:"description,omitempty"`
 	Schema      *SchemaRef `json:"schema,omitempty"`
 }
+
+// Security scheme + refs
+type SecurityScheme struct {
+	Type         string `json:"type"`                   // "http", "apiKey", "oauth2"
+	Scheme       string `json:"scheme,omitempty"`       // "bearer" for http
+	BearerFormat string `json:"bearerFormat,omitempty"` // "JWT" (optional)
+	Name         string `json:"name,omitempty"`         // for apiKey
+	In           string `json:"in,omitempty"`           // "header", "cookie", "query" (for apiKey)
+}
+
+type SecuritySchemeRef struct {
+	Ref            string          `json:"$ref,omitempty"`
+	SecurityScheme *SecurityScheme `json:"-"`
+}
+
+func (sr SecuritySchemeRef) MarshalJSON() ([]byte, error) {
+	if sr.Ref != "" {
+		return []byte(`{"$ref":"` + sr.Ref + `"}`), nil
+	}
+	if sr.SecurityScheme == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(sr.SecurityScheme)
+}
+
+// Global security requirements: map of scheme name -> scopes
+type SecurityRequirement map[string][]string
 
 func (b *Builder) ensurePath(path string) *PathItem {
 	if pi, ok := b.Paths[path]; ok {
@@ -291,15 +322,35 @@ func intToStr(i int) string {
 	return string(buf[p:])
 }
 
+// UseHTTPBearerAuth registers a standard HTTP Bearer auth (JWT) scheme
+// and sets it as a global security requirement.
+func (b *Builder) UseHTTPBearerAuth(name string) {
+	if name == "" {
+		name = "bearerAuth"
+	}
+	if b.Components.SecuritySchemes == nil {
+		b.Components.SecuritySchemes = map[string]SecuritySchemeRef{}
+	}
+	b.Components.SecuritySchemes[name] = SecuritySchemeRef{
+		SecurityScheme: &SecurityScheme{
+			Type:         "http",
+			Scheme:       "bearer",
+			BearerFormat: "JWT",
+		},
+	}
+	b.Security = append(b.Security, SecurityRequirement{name: []string{}})
+}
+
 // ServeJSON returns a standard http.HandlerFunc producing the OpenAPI doc.
 func ServeJSON(b *Builder) http.HandlerFunc {
 	type root struct {
-		OpenAPI    string              `json:"openapi"`
-		Info       Info                `json:"info"`
-		Servers    []Server            `json:"servers,omitempty"`
-		Paths      map[string]PathItem `json:"paths"`
-		Tags       []Tag               `json:"tags,omitempty"`
-		Components Components          `json:"components,omitempty"`
+		OpenAPI    string                `json:"openapi"`
+		Info       Info                  `json:"info"`
+		Servers    []Server              `json:"servers,omitempty"`
+		Paths      map[string]PathItem   `json:"paths"`
+		Tags       []Tag                 `json:"tags,omitempty"`
+		Components Components            `json:"components,omitempty"`
+		Security   []SecurityRequirement `json:"security,omitempty"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -321,6 +372,7 @@ func ServeJSON(b *Builder) http.HandlerFunc {
 			Paths:      stable,
 			Tags:       b.Tags,
 			Components: b.Components,
+			Security:   b.Security,
 		}
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
@@ -328,28 +380,122 @@ func ServeJSON(b *Builder) http.HandlerFunc {
 	}
 }
 
-// ServeUI returns a tiny SwaggerUI HTML referencing the given spec url.
-func ServeUI(specURL, title string) http.HandlerFunc {
-	html := `<!DOCTYPE html>
+// ServeUIAuto serves Swagger UI that auto-resolves the JSON spec URL
+// relative to the current scope path (works for both app root and scoped routers).
+func ServeUIAuto(specBasename, title string) http.HandlerFunc {
+	if specBasename == "" {
+		specBasename = "openapi.json"
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+		html := fmt.Sprintf(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>` + title + `</title>
+  <title>%s</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style> body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; } </style>
 </head>
 <body>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
-  window.onload = () => {
-    window.ui = SwaggerUIBundle({ url: "` + specURL + `", dom_id: '#swagger-ui' });
-  };
+  (function(){
+    var specBasename = %q;
+    var p = window.location.pathname;
+    var base = p.replace(/\/[^\/]*$/, ''); // drop last segment
+    if (!base) base = '/';
+    var specURL = (base.endsWith('/') ? base : base + '/') + specBasename;
+
+    const LS_TOKEN_KEY = "zentrox_auth_token";
+    const LS_EXPAND_KEY = "zentrox_sw_expand_v1";
+    function getToken(){ return localStorage.getItem(LS_TOKEN_KEY) || ""; }
+    function saveExpanded(set){ try { localStorage.setItem(LS_EXPAND_KEY, JSON.stringify(Array.from(set))); } catch(e){} }
+    function loadExpanded(){ try { const raw = localStorage.getItem(LS_EXPAND_KEY); return raw ? new Set(JSON.parse(raw)) : new Set(); } catch(e){ return new Set(); } }
+
+    function methodPathKey(el){
+      const mEl = el.querySelector('.opblock-summary-method');
+      const pEl = el.querySelector('.opblock-summary-path');
+      const method = mEl && mEl.textContent ? mEl.textContent.trim().toUpperCase() : "";
+      const path = pEl && pEl.textContent ? pEl.textContent.trim() : "";
+      return (method && path) ? (method + " " + path) : null;
+    }
+    function collectOpblocks(){ return Array.from(document.querySelectorAll('.opblock')); }
+    function isOpen(el){ return el.classList.contains('is-open'); }
+
+    function expandAllTags(){
+      const tags = document.querySelectorAll('.opblock-tag');
+      tags.forEach(tag => {
+        const section = tag.closest('.opblock-tag-section') || tag.parentElement;
+        const opened = (section && section.classList.contains('is-open')) || tag.classList.contains('is-open');
+        if (!opened) tag.click();
+      });
+    }
+
+    const ui = SwaggerUIBundle({
+      url: specURL,
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      docExpansion: 'list',         
+      defaultModelsExpandDepth: -1, 
+      persistAuthorization: true,
+      requestInterceptor: (req) => {
+        const t = getToken();
+        if (t) { req.headers = req.headers || {}; req.headers['Authorization'] = 'Bearer ' + t; }
+        return req;
+      },
+    });
+
+    const expanded = loadExpanded();
+
+    function restoreExpanded(){
+      const blocks = collectOpblocks();
+      blocks.forEach((el) => {
+        const k = methodPathKey(el);
+        if (k && expanded.has(k) && !isOpen(el)) {
+          const summary = el.querySelector('.opblock-summary');
+          if (summary) summary.click();
+        }
+      });
+    }
+
+    const observer = new MutationObserver((mutations) => {
+      let dirty = false;
+      mutations.forEach((m) => {
+        if (m.type === 'attributes' && m.attributeName === 'class' && m.target.classList.contains('opblock')) {
+          const el = m.target;
+          const k = methodPathKey(el);
+          if (!k) return;
+          if (isOpen(el)) expanded.add(k); else expanded.delete(k);
+          dirty = true;
+        }
+      });
+      if (dirty) saveExpanded(expanded);
+    });
+
+    function attachObserver(){
+      collectOpblocks().forEach((el) => {
+        observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+      });
+    }
+
+    function onReady(){
+      expandAllTags();
+      attachObserver();
+      setTimeout(restoreExpanded, 0);
+    }
+
+    let tries = 0;
+    const iv = setInterval(() => {
+      const ready = document.querySelector('.opblock-tag, .opblock');
+      if (ready || tries++ > 100) { clearInterval(iv); onReady(); }
+    }, 100);
+  })();
   </script>
 </body>
-</html>`
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+</html>`, title, specBasename)
+
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(html))
 	}
