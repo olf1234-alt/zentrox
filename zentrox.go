@@ -5,13 +5,18 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +25,15 @@ import (
 
 // Handler is the middleware/handler function type.
 type Handler func(*Context)
+
+type RouteInfo struct {
+	Method      string
+	Path        string
+	HandlerName string
+	Middlewares []string
+	File        string
+	Line        int
+}
 
 // App is the main entrypoint of the framework.
 type App struct {
@@ -45,6 +59,11 @@ type App struct {
 
 	// enable openapi
 	enableOpenapi bool
+
+	// enable route printing when Run()
+	printRoutes bool
+	// registry all registered routes
+	routeIndex map[string]RouteInfo
 }
 
 // ServerConfig controls the underlying http.Server configuration.
@@ -72,7 +91,10 @@ type ServerConfig struct {
 }
 
 func NewApp() *App {
-	return &App{rt: newRouter()}
+	return &App{
+		rt:         newRouter(),
+		routeIndex: make(map[string]RouteInfo),
+	}
 }
 
 // Plug registers global middlewares in declared order.
@@ -88,6 +110,7 @@ func (a *App) on(method, path string, hs ...Handler) {
 	h := hs[len(hs)-1]    // main handler: last element
 	mws := hs[:len(hs)-1] // route middlewares
 	a.rt.add(method, path, append(a.plug, mws...), h)
+	a.trackRoute(method, path, h, append(a.plug, mws...))
 }
 
 // Sugar helpers.
@@ -264,6 +287,9 @@ func (a *App) buildServer(cfg *ServerConfig) *http.Server {
 	if c.BaseContext != nil {
 		srv.BaseContext = c.BaseContext
 	}
+	if a.printRoutes {
+		a.PrintRoutes(os.Stdout)
+	}
 	return srv
 }
 
@@ -361,6 +387,111 @@ func (a *App) EnableOpenAPI() bool {
 	return a.enableOpenapi
 }
 
+// Enable/disable route printing when server starts
+func (a *App) SetPrintRoutes(v bool) *App {
+	a.printRoutes = v
+	return a
+}
+
+// Get route list (copy & sort for stability)
+func (a *App) ListRoutes() []RouteInfo {
+	if len(a.routeIndex) == 0 {
+		return nil
+	}
+	out := make([]RouteInfo, 0, len(a.routeIndex))
+	for _, ri := range a.routeIndex {
+		out = append(out, ri)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path == out[j].Path {
+			return out[i].Method < out[j].Method
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
+func (a *App) updateRouteName(method, fullPath, handlerName string) {
+	if handlerName == "" {
+		return
+	}
+	key := strings.ToUpper(method) + "\t" + fullPath
+	ri, ok := a.routeIndex[key]
+	if !ok {
+		return
+	}
+	ri.HandlerName = handlerName
+	a.routeIndex[key] = ri
+}
+
+func (a *App) PrintRoutes(w io.Writer) {
+	for _, r := range a.ListRoutes() {
+		mw := r.Middlewares
+		info := r.HandlerName
+		if r.File != "" && r.Line > 0 {
+			info = fmt.Sprintf("%s (%s:%d)", info, path.Base(r.File), r.Line)
+		}
+		if len(mw) == 0 {
+			fmt.Fprintf(w, " %-6s %-32s -> %s\n", "["+r.Method+"]", r.Path, info)
+		} else {
+			fmt.Fprintf(w, " %-6s %-32s -> %s  (mw: %s)\n",
+				"["+r.Method+"]", r.Path, info, strings.Join(mw, ", "))
+		}
+	}
+}
+
+func handlerName(h Handler) (string, string, int) {
+	if h == nil {
+		return "", "", 0
+	}
+	p := reflect.ValueOf(h).Pointer()
+	if p == 0 {
+		return "", "", 0
+	}
+	fn := runtime.FuncForPC(p)
+	if fn == nil {
+		return "", "", 0
+	}
+	name := fn.Name()
+	file, line := fn.FileLine(p)
+
+	// shorten function name
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	// keep the part after the dot to remove the package prefix
+	if i := strings.Index(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	return name, file, line
+}
+
+func middlewareNames(mws []Handler) []string {
+	out := make([]string, 0, len(mws))
+	for _, mw := range mws {
+		n, _, _ := handlerName(mw)
+		out = append(out, n)
+	}
+	return out
+}
+
+// internal helper to track each registration
+func (a *App) trackRoute(method, fullPath string, h Handler, mws []Handler) {
+	if a.routeIndex == nil {
+		a.routeIndex = make(map[string]RouteInfo)
+	}
+	key := strings.ToUpper(method) + "\t" + fullPath
+	hn, file, line := handlerName(h)
+	a.routeIndex[key] = RouteInfo{
+		Method:      strings.ToUpper(method),
+		Path:        fullPath,
+		HandlerName: hn,
+		Middlewares: middlewareNames(mws),
+		File:        file,
+		Line:        line,
+	}
+}
+
 // Scope (Route Group)
 type Scope struct {
 	app    *App
@@ -376,6 +507,7 @@ func (s *Scope) on(method, rel string, hs ...Handler) {
 	mws := hs[:len(hs)-1]
 	stack := append(s.app.plug, append(s.plug, mws...)...)
 	s.app.rt.add(method, s.prefix+rel, stack, h)
+	s.app.trackRoute(method, s.prefix+rel, h, stack)
 }
 func (s *Scope) OnGet(path string, handlers ...Handler) {
 	s.on(http.MethodGet, path, handlers...)

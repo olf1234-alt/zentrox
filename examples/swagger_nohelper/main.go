@@ -26,7 +26,7 @@ type AppError struct {
 }
 
 func main() {
-	app := zentrox.NewApp().SetEnableOpenAPI(true)
+	app := zentrox.NewApp().SetEnableOpenAPI(true).SetPrintRoutes(true)
 
 	b := openapi.New(
 		"Zentrox Example API",
